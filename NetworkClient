@@ -1,0 +1,659 @@
+//
+//  NetworkClient.swift
+//  NetworkClient
+//
+//  Created by Nayan Dave on 13/10/21.
+//
+
+import Foundation
+import Alamofire
+import FirebaseCrashlytics
+//import UIKit
+
+
+struct NetworkClient {
+    
+    static let dataParsingError = "Data is not passing through Codable Response Modal"
+    
+    // MARK: ------------ Normal API Calling Request -----------
+    /// **Requests API if Network is Reachable and returns the Response as Decodable**
+    /// - Parameter method: HTTP Method of Request e.g. GET/POST/PUT
+    /// - Parameter apiName: String of API URL
+    /// - Parameter param: Optional Parameters to be send with Request API
+    /// - Parameter showHud: Shows Loading Screen if value TRUE
+    /// - Parameter completionHandler: (Boolean: TRUE if successful request/FALSE if unseccessful request, Response: T? returns T as Decodable(_Your_Response_Model_) if Successful request else returns nil, String?: returns error message as String if error occurs else returns nil)
+    static func networkRequest<T: Decodable>(method: HTTPMethod,
+                                             apiName: String,
+                                             param: Parameters?,
+                                             showHud: Bool = true,
+                                             senderView: UIView? = nil,
+                                             completionHandler:
+                                             @escaping ((_ isSuccess: Bool, _ response: (T)?) -> Void)) {
+        if appDelegate.isNetworkAvailable  {
+            print("\n\n -- Simple Network Request of API ---- \(apiName) ---\n\n")
+            if showHud {
+                Loader.showLoader()
+            }
+            DispatchQueue.main.async {
+                senderView?.animateLoader()
+                AF.request(apiName,
+                           method: method,
+                           parameters: param) { $0.timeoutInterval = 10 }
+                .validate(statusCode: 200...299)
+                .responseData
+                { response in
+                    debugPrint("Response Time == \(response.metrics?.taskInterval.duration)")
+                    switch response.result {
+                    case .success(let responseData):
+                        if let data = try? JSONDecoder().decode(T.self, from: responseData) {
+                            senderView?.remove_Activity_Animator()
+                            completionHandler(true, data)
+                        } else {
+                            show_API_Parsing_Error(apiName, T.self, String(data: responseData, encoding: .utf8))
+                            senderView?.remove_Activity_Animator()
+                            completionHandler(false, nil)
+                            if showHud {
+                                Loader.hideLoader()
+                            }
+                        }
+                    case .failure(let error):
+                        show_API_Error_Message(apiName, error)
+                        senderView?.remove_Activity_Animator()
+                        completionHandler(false, nil)
+                        if showHud {
+                            Loader.hideLoader()
+                        }
+                    }
+                }
+            }
+        } else {
+//            NoInternet.showInternetView(noInternetMsg)
+        }
+    }
+    ///**This was changed on 22/06/2022, Before it was like below**
+//    static func networkRequest<T: Decodable>(method: HTTPMethod,
+//                                             apiName: String,
+//                                             param: Parameters?,
+//                                             showHud: Bool = true,
+//                                             completionHandler:
+//                                             @escaping ((_ isSuccess: Bool, _ response: (T)?, _ errorMessage: String?) -> Void)) {
+//        if appDelegate.isNetworkAvailable  {
+//            print("\n\n -- Simple Network Request of API ---- \(apiName) ---\n\n")
+//            if showHud {
+//                Loader.showLoader()
+//            }
+//            DispatchQueue.main.async {
+//                AF.request(apiName,
+//                           method: method,
+//                           parameters: param).responseData
+//                { response in
+//                    switch response.result {
+//                    case .success(let responseData):
+//                        if let data = try? JSONDecoder().decode(T.self, from: responseData) {
+//                            completionHandler(true, data, nil)
+//                        } else {
+//                            debugPrint("Data Parsing with networkRequest Error Calling \(apiName)")
+//                            completionHandler(false, nil, dataParsingError)
+//                            if showHud {
+//                                Loader.hideLoader()
+//                            }
+//                        }
+//                    case .failure(let error):
+//                        debugPrint("Error Calling with networkRequest \(apiName) Due To ---> \(error.localizedDescription)")
+//                        completionHandler(false, nil, error.localizedDescription)
+//                        if showHud {
+//                            Loader.hideLoader()
+//                        }
+//                    }
+//                }
+//            }
+//        } else {
+//            NoInternet.showInternetView(noInternetMsg)
+//        }
+//    }
+    
+    static func networkRequestSwiftyJSON(method: HTTPMethod,
+                                             apiName: String,
+                                             param: Parameters?,
+                                             showHud: Bool = true,
+                                             completionHandler:
+                                             @escaping ((_ isSuccess: Bool, _ response: (JSON)?) -> Void)) {
+        if appDelegate.isNetworkAvailable  {
+            print("\n\n -- Simple Network Request of API ---- \(apiName) ---\n\n")
+            if showHud {
+                Loader.showLoader()
+            }
+            DispatchQueue.main.async {
+                AF.request(apiName,
+                           method: method,
+                           parameters: param) { $0.timeoutInterval = 10 }
+                .validate(statusCode: 200...299)
+                .responseData
+                { response in
+                    debugPrint("Response Time == \(response.metrics?.taskInterval.duration)")
+                    switch response.result {
+                    case .success(let responseData):
+                        do {
+                            let finalJSON = try JSON(data: responseData, options: .fragmentsAllowed)
+                            
+                            if finalJSON["statusCode"].intValue == 0 {      //Error statusCode in Reponse
+//                                show_Error_Status_Code_Message(apiName)
+                                show_API_Error_Message(apiName, finalJSON["msg"].stringValue)
+                                completionHandler(false, nil)
+                                return
+                            } else {
+                                completionHandler(true, finalJSON)
+                            }
+                        } catch let erro {
+                            show_Catching_Error_Message(apiName, erro)
+                            completionHandler(false, nil)
+                            if showHud {
+                                Loader.hideLoader()
+                            }
+                        }
+                    case .failure(let error):
+                        show_API_Error_Message(apiName, error)
+                        completionHandler(false, nil)
+                        if showHud {
+                            Loader.hideLoader()
+                        }
+                    }
+                }
+            }
+        } else {
+//            NoInternet.showInternetView(noInternetMsg)
+        }
+    }
+    
+    /// Shows **Relevent debugPring Message with API_NAME**
+    /// - Parameter apiName: API_NAME in String which is called
+    static private func show_Error_Status_Code_Message(_ apiName: String) {
+        debugPrint("Error statusCode received in calling \(apiName)")
+    }
+    
+    /// Error is catched when handling with SwiftyJSON then shows **Relevent debugPring Message with API_NAME & Error_Description**
+    /// - Parameter apiName: API_NAME in String which is called
+    /// - Parameter error: Error which occured during API calling.
+    static private func show_Catching_Error_Message(_ apiName: String, _ error: Error) {
+        debugPrint("Catching Error Calling \(apiName) which is \(error.localizedDescription)")
+    }
+    
+    /// Shows **Relevent debugPrint Message with API_NAME & Error_Description**
+    /// - Parameter apiName: API_NAME in String which is called
+    /// - Parameter error: Error which occured during API calling.
+    static private func show_API_Error_Message(_ apiName: String, _ error: Error) {
+        debugPrint("Error Calling with networkRequest \(apiName) Due To ---> \(error.localizedDescription)")
+        appView.makeToast(error.localizedDescription)
+    }
+    
+    /// Shows **Relevent debugPrint Message with API_NAME & Error_Description**
+    /// - Parameter apiName: API_NAME in String which is called
+    /// - Parameter error: Error of String Description  which occured during API calling.
+    static private func show_API_Error_Message(_ apiName: String, _ error: String) {
+        debugPrint("Error Calling with networkRequest \(apiName) Due To ---> \(error)")
+        appView.makeToast(error)
+    }
+    
+    /// Shows **debugPrint Data Parsing Error Message with API_NAME**
+    /// - Parameter apiName: API_NAME in String which is called
+    static private func show_API_Parsing_Error(_ apiName: String, _ codable: Decodable.Type, _ response: String?) {
+        debugPrint("\(apiName) Data Parsing Error in \(codable.self) But Response is \(response ?? "NIL")")
+//        appView.makeToast("Something Went Wrong!\nPlease Try Again Later")
+    }
+    
+    
+    
+    // MARK: ------------ Upload Single Multipart File Of Type {Image or PDF} in API Calling Request -----------
+    /**
+     **API Request with  POST method  with SIngle File Upload capability if Network is Reachable and returns the Response as Decodable**
+     - Parameter url: String of API URL
+     - Parameter param: Optional Parameters to be send with Request API
+     - Parameter filePath: Path of file that will be uploaded
+     - Parameter showLoader: Shows Loading Screen if value TRUE
+     - Parameter completionHandler: Escaping Closure which takes Response's Decodable Model , Used: convert response into the same Decodable Model later
+     - Returns: (Boolean: TRUE if successful request/FALSE if unseccessful request, Response: T? returns T as Decodable(_Your_Response_Model_) if Successful request else returns nil, String?: returns error message as String if error occurs else returns nil)
+     - # Example #
+        ```
+         NetworkClient.postMultipleFilesWithMultipartData(url: "", param: params, filePathWithType: [selectedRCPath.path : .pdf, selectedPUCPath.path: .pdf, selectedInsurancePath.path: .pdf], fromView: view, showLoader: true, completionHandler: { (succ, response: CategoryResponseModel?, err) in
+         _YOUR_CODE_HERE_
+          })
+        ```
+     */
+    static func postWithMultipartData<T:Decodable>(url: String,
+                                                   param: [String: Any],
+                                                   fileInfo: FileInfo,
+                                                   header: HTTPHeader,
+                                                   showLoader: Bool,
+                                                   completionHandler:
+                                                   @escaping ((_ isSuccess: Bool,_ response: T?, _ errorMessage: String?) -> Void)) {
+        
+        if appDelegate.isNetworkAvailable {
+            if showLoader {
+                Loader.showLoader("Uploading...")
+            }
+            
+            var isImage: UIImage? = nil
+            var imagename: String! = nil
+            var isFilePath: URL? = nil
+            
+            switch fileInfo.ImageOrFilePath {
+            case .path(let path): isFilePath = path
+            case .image(let img):
+                isImage = img
+                imagename = fileInfo.imagename ?? fileInfo.paramName
+            }
+            
+            let headers: HTTPHeaders = [.contentType("multipart/form-data"), header]
+            
+//            let fileName = URL(string: filePath)!.lastPathComponent
+//
+//            let splitName = fileName.split(separator: ".")
+//            let name = String(describing: splitName.first)
+//            let fileContentType = String(describing: splitName.last)
+//
+//            let fileData = FileManager.default.contents(atPath: filePath)
+//            print("Register param: \(param)")
+            AF.upload(multipartFormData: { (multi) in
+                for (k, va) in param {
+                    multi.append("\(va)".data(using: .utf8)!, withName: k as String)
+                }
+                
+                if let isImage = isImage {
+                    if let imgData = isImage.sd_imageData(as: .PNG, compressionQuality: 80) {
+                        multi.append(imgData, withName: fileInfo.paramName, fileName: imagename, mimeType: "image/png")
+                    }
+                } else if let isFilePath = isFilePath {
+                    multi.append(isFilePath, withName: fileInfo.paramName, fileName: isFilePath.lastPathComponent, mimeType: "application/pdf")
+                }
+//                if let data = fileData {
+//                    multi.append(data, withName: name, fileName: fileName, mimeType: fileType == .image ? "image/png" : "application/pdf")
+//                }
+            }, to: url, headers: headers)
+            { $0.timeoutInterval = 90 }
+            .uploadProgress(queue: .main, closure: { prog in
+                Loader.changeUploadProgress(progress: prog)
+            }).responseData { respData in
+                switch respData.result {
+                case .success(let rawData):
+                    if let data = try? JSONDecoder().decode(T.self, from: rawData) {
+                        completionHandler(true, data, nil)
+                    } else {
+                        debugPrint("Data Parsing with postWithMultipartData Error Calling \(url)")
+                        completionHandler(false, nil, dataParsingError)
+                        if showLoader {
+                            Loader.hideLoader()
+                        }
+                    }
+                case .failure(let erro):
+//                    completionHandler(false, nil, erro.localizedDescription)
+                    debugPrint("Error Calling with postWithMultipartData \(url) Due To ---> \(erro.localizedDescription)")
+                    completionHandler(false, nil, erro.localizedDescription)
+                    if showLoader {
+                        Loader.hideLoader()
+                    }
+                }
+            }
+        } else {
+//            NoInternet.showInternetView(noInternetMsg)
+        }
+    }
+    
+    ///**Customizable MultiPart Types Enumaration**
+    enum FileMultiPartType {
+        case image
+        case pdf
+    }
+    
+    
+    ///**Contains All Information Required To Upload A File with API Request**
+    struct FileInfo {
+        var paramName: String
+        var imagename: String?
+        var ImageOrFilePath: imageOrFilePath
+    }
+    
+    ///**Either Contains UIImage if File is typeOf Image OR Contains String FilePath if File is not Image and of any other MultiPartType**
+    enum imageOrFilePath {
+        case path(URL)
+        case image(UIImage)
+    }
+    
+    // MARK: ------------ Upload Multiple Multipart Files Of Type {Image or PDF} in API Calling Request -----------
+    static func postMultipleFilesWithMultipartData<T:Decodable>(url: String,
+                                                                param: [String: Any],
+                                                                filesInfo: [FileInfo],
+                                                                header: HTTPHeader,
+                                                                showLoader: Bool,
+                                                                completionHandler:
+                                                                @escaping ((_ isSuccess: Bool,_ response: T?, _ errorMessage: String?) -> Void)) {
+        
+        if appDelegate.isNetworkAvailable {
+            if showLoader {
+                Loader.showLoader("Uploading...")
+            }
+
+            print("Register param: \(param)")
+            let headers: HTTPHeaders = [.contentType("multipart/form-data"), header]
+            
+            AF.upload(multipartFormData: { (multi) in
+                for (k, va) in param {
+                    multi.append("\(va)".data(using: .utf8)!, withName: k as String)
+                }
+                
+                for currentFile in filesInfo {
+                    
+                    var currentImage: UIImage? = nil
+                    var imagename: String! = nil
+                    var cPath: URL? = nil
+                    
+                    switch currentFile.ImageOrFilePath {
+                    case .image(let image):
+                        currentImage = image
+                        imagename = currentFile.imagename ?? currentFile.paramName
+                    case .path(let path): cPath = path
+                    }
+                    
+                    if let currentPath = cPath {
+                        let fileName = currentPath.lastPathComponent
+                        
+                        //let splitName = fileName.split(separator: ".")
+                        //let name = String(describing: splitName.first)
+                        //let fileContentType = String(describing: splitName.last)
+                        
+                        multi.append(currentPath, withName: currentFile.paramName, fileName: fileName, mimeType: "application/pdf")
+                    } else if let currentImage = currentImage {
+                        var imgData: Data?
+                        imgData = currentImage.pngData()
+                        if let imgData = imgData {
+                            debugPrint("Uploading -- \(imagename)")
+                            multi.append(imgData, withName: currentFile.paramName, fileName: imagename, mimeType: "img/png")
+                        }
+                    }
+                }
+            }, to: url, headers: headers)
+            { $0.timeoutInterval = 90 }
+            .uploadProgress(queue: .main, closure: { prog in
+                Loader.changeUploadProgress(progress: prog)
+            }).responseData { respData in
+                debugPrint("Response Time == \(respData.metrics?.taskInterval.duration)")
+                switch respData.result {
+                case .success(let rawData):
+                    if let data = try? JSONDecoder().decode(T.self, from: rawData) {
+                        completionHandler(true, data, nil)
+                    } else {
+                        completionHandler(false, nil, dataParsingError)
+                    }
+                case .failure(let erro):
+                    completionHandler(false, nil, erro.localizedDescription)
+                    debugPrint("")
+                }
+            }
+        }
+    }
+    
+    // MARK: ----------- Encoded Network Request ----------
+    ///**Requests API if Network is Reachable and returns the Response as Decodable**
+    /// - Parameter method: HTTP Method of Request e.g. GET/POST/PUT
+    /// - Parameter apiName: String of API URL
+    /// - Parameter param: Optional Parameters to be send with Request API
+    /// - Parameter encoding: Encoding for Parameter
+    /// - Parameter headers: Authorization Header for Request API
+    /// - Parameter showHud: Shows Loading Screen if value TRUE
+    /// - Parameter completionHandler: (Boolean: TRUE if successful request/FALSE if unseccessful request, Response: T? returns T as Decodable(_Your_Response_Model_) if Successful request else returns nil, String?: returns error message as String if error occurs else returns nil)
+    static func encodedNetworkRequest<T: Decodable>(method: HTTPMethod,
+                                                    apiName: String,
+                                                    param: Parameters? = nil,
+                                                    encoding: ParameterEncoding = URLEncoding.default,
+                                                    headers: HTTPHeaders = .default,
+                                                    showHud: Bool = true,
+                                                    senderView: UIView? = nil,
+                                                    spinnerColor: UIColor = .white,
+                                                    completionHandler:
+                                                    @escaping ((_ isSuccess: Bool, _ response: (T)?, _ errorMessage: String?) -> Void)) {
+        
+        if appDelegate.isNetworkAvailable  {
+            print("\n\n -- Simple Encoded Request of API ---- \(apiName) ---\n\n")
+            
+            if showHud {
+                Loader.showLoader()
+            }
+            senderView?.animateLoader(spinnerColor)
+            
+            AF.request(apiName,
+                       method: method,
+                       parameters: param,
+                       encoding: encoding,
+                       headers: headers) { $0.timeoutInterval = 10 }
+            .validate(statusCode: 200...299)
+            .responseData { response in
+                debugPrint("Response Time == \(response.metrics?.taskInterval.duration)")
+                switch response.result {
+                case .success(let responseData):
+                    if let data = try? JSONDecoder().decode(T.self, from: responseData) {
+                        senderView?.remove_Activity_Animator()
+                        completionHandler(true, data, nil)
+                    } else {
+                        senderView?.remove_Activity_Animator()
+                        Crashlytics.crashlytics().log("Data Parsing Error in Modal: \(T.self)")
+                        print("RESPONSE -- =\(String(data: responseData, encoding: .utf8)!)")
+                        completionHandler(false, nil, dataParsingError)
+                    }
+                case .failure(let error):
+                    senderView?.remove_Activity_Animator()
+                    completionHandler(false, nil, error.localizedDescription)
+                    if let data = response.data {
+                        print("RESPONSE -- \(String(data: data, encoding: .utf8)!)")
+                    }
+                    Crashlytics.crashlytics().record(error: error)
+                }
+            }
+        } else {
+//            NoInternet.showInternetView(noInternetMsg)
+        }
+    }
+    
+    
+    
+    static func encodedNetworkRequestWithSwifty(method: HTTPMethod,
+                                                    apiName: String,
+                                                    param: Parameters?,
+                                                    encoding: ParameterEncoding = URLEncoding.default,
+                                                    headers: HTTPHeaders = .default,
+                                                    showHud: Bool = true,
+                                                    completionHandler:
+                                                    @escaping ((_ isSuccess: Bool, _ response: JSON?) -> Void)) {
+        
+        if appDelegate.isNetworkAvailable  {
+            print("\n\n -- Simple Encoded Request of API ---- \(apiName) ---\n\n")
+            
+            if showHud {
+                Loader.showLoader()
+            }
+            
+            AF.request(apiName,
+                       method: method,
+                       parameters: param,
+                       encoding: encoding,
+                       headers: headers) { $0.timeoutInterval = 10 }
+            .validate(statusCode: 200...299)
+            .responseData { response in
+                debugPrint("Response Time == \(response.metrics?.taskInterval.duration)")
+                switch response.result {
+                case .success(let responseData):
+                    do {
+                        let finalJSON = try JSON(data: responseData, options: .fragmentsAllowed)
+                        if let isStatusExist = finalJSON["status"].int {
+                            if isStatusExist == 0 {
+                                show_API_Error_Message(apiName, finalJSON["msg"].stringValue)
+                                if showHud {
+                                    Loader.hideLoader()
+                                }
+                                completionHandler(false, nil)
+                            } else {
+                                if showHud {
+                                    Loader.hideLoader()
+                                }
+                                completionHandler(true, finalJSON)
+                            }
+                        } else {
+                            show_API_Error_Message(apiName, "Bad Status Code Received!")
+                            if showHud {
+                                Loader.hideLoader()
+                            }
+                            completionHandler(false, nil)
+                        }
+                    } catch let erro {
+                        show_Catching_Error_Message(apiName, erro)
+                        if showHud {
+                            Loader.hideLoader()
+                        }
+                        Crashlytics.crashlytics().record(error: erro)
+                        completionHandler(false, nil)
+                    }
+
+                case .failure(let error):
+                    show_API_Error_Message(apiName, error)
+                    completionHandler(false, nil)
+                }
+            }
+        } else {
+//            NoInternet.showInternetView(noInternetMsg)
+        }
+    }
+
+    
+    // MARK: --------------- Multiple Encoded Parameters Network Request ------------
+    ///**Requests API if Network is Reachable and returns the Response as Decodable**
+    /// - Parameter method: HTTP Method of Request e.g. GET/POST/PUT
+    /// - Parameter apiName: String of API URL
+    /// - Parameter mainParams: Optional Parameters to be send with Request API
+    /// - Parameter mainParamEncoding: Parameter Encoding For mainParams
+    /// - Parameter showHud: Shows Loading Screen if value TRUE
+    /// - Parameter header: Authorization Headers to be sent Here
+    /// - Parameter completionHandler: (Boolean: TRUE if successful request/FALSE if unseccessful request, Response: T? returns T as Decodable(_Your_Response_Model_) if Successful request else returns nil, String?: returns error message as String if error occurs else returns nil)
+    static func multipleEncodedRequest<T: Decodable>(method: HTTPMethod,
+                                                     apiName: String,
+                                                     mainParams: Parameters?,
+                                                     mainParamEncoding: ParameterEncoding,
+                                                     bodyParams: Any?,
+//                                                     bodyParamEncoding: JSONEncoding,
+                                                     showHud: Bool = true,
+                                                     header: HTTPHeaders?,
+                                                     completionHandler:
+                                                     @escaping ((_ isSuccess: Bool, _ response: (T)?, _ errorMessage: String?) -> Void)) {
+        
+        if appDelegate.isNetworkAvailable  {
+            print("\n\nMultiple Encoded Request of API ---------- \(apiName)\n\n")
+            
+            if showHud {
+                Loader.showLoader()
+            }
+            
+            do {
+                var request = try URLRequest(url: URL(string: apiName)!, method: method, headers: header)
+                if let query_parameters = mainParams, let bodyParameters = bodyParams {
+                    request.httpBody = try JSONSerialization.data(withJSONObject: bodyParameters)
+                    request = try mainParamEncoding.encode(request, with: query_parameters)
+                    AF.request(request).validate(statusCode: 200...299).responseData { response in
+                        switch response.result {
+                        case .success(let responseData):
+                            if let data = try? JSONDecoder().decode(T.self, from: responseData) {
+                                completionHandler(true, data, nil)
+                                DispatchQueue.main.async {
+                                     
+                                }
+                            } else {
+                                completionHandler(false, nil, dataParsingError)
+                                DispatchQueue.main.async {
+                                     
+                                }
+                            }
+                        case .failure(let error):
+                            completionHandler(false, nil, error.localizedDescription)
+                            DispatchQueue.main.async {
+                                 
+                            }
+                        }
+                    }
+                }
+            } catch let err {
+                debugPrint("\n\n\n\n\n******\(err.localizedDescription)******\n\n\n\n\n")
+                completionHandler(false, nil, err.localizedDescription)
+            }
+        } else {
+//            NoInternet.showInternetView(noInternetMsg)
+        }
+    }
+    
+//    static func sendFCMNotification(title_name: String, body: String, icon: String) {
+//        DatabaseManager.shared.getAdminToken { success in
+//            if success {
+//                let serverKey = "AAAAAeF9ulc:APA91bGDsDCUcam2joP1MJFEpr7pjdvkGwTWildRfATRI5zMOEEmjpxIFLzgl7MOlq27vPfjagx4Y-5JWAP9Pr1MaBxLO2y6CYtVXRj2F6C_mGD8ndLkjoc58Cm49Nfm82XaeZk4NXVh"
+//
+//                let urlString = "https://fcm.googleapis.com/fcm/send"
+//
+//                let paramString: [String : Any] = ["to" : getAdminFCMToken(),
+//                                                   "priority": "high",
+//                                                   "notification" : ["title" : title_name,
+//                                                                     "body" : body,
+//                                                                     "icon" : icon,
+//                                                                     "sound": "default"]]
+//
+//                let headers: HTTPHeaders = [.contentType("application/json"),
+//                                            .authorization("key=\(serverKey)")]
+//
+//
+//                do {
+//                    var request = try URLRequest(url: URL(string: urlString)!, method: .post, headers: headers)
+//                        request.httpBody = try JSONSerialization.data(withJSONObject: paramString)
+//                    AF.request(request).response { response in
+//                        switch response.result {
+//                        case .success(_) :
+////                            debugPrint(String(data: data!, encoding: .utf8 ))
+//                            debugPrint("Notification Successfully Sent")
+//                        case .failure(let err):
+//                            debugPrint("Notification Failed Due To \(err.localizedDescription)")
+//                        }
+//                    }
+//                } catch let errr {
+//                    debugPrint("\n\n\n\n\n******\(errr.localizedDescription)******\n\n\n\n\n")
+//                }
+//            }
+//        }
+//    }
+}
+
+
+//class PushNotificationSender {
+//    static func sendPushNotification(title: String, body: String, icon: String) {
+//
+//        DatabaseManager.shared.getAdminToken { succ in
+//            if succ {
+//                let urlString = "https://fcm.googleapis.com/fcm/send"
+//                let url = NSURL(string: urlString)!
+//                let paramString: [String : Any] = ["to" : getAdminFCMToken(),
+//                                                   "priority": "high",
+//                                                   "notification" : ["title" : title, "body" : body, "icon" : icon],
+//        //                                           "data" : ["user" : "test_id"]
+//                ]
+//                let request = NSMutableURLRequest(url: url as URL)
+//                request.httpMethod = "POST"
+//                request.httpBody = try? JSONSerialization.data(withJSONObject:paramString, options: [.prettyPrinted])
+//                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+//                request.setValue("key=AAAA5htMGDg:APA91bE7YHb9dQgsXDZT_J8YUVSHyjEdEKUXnJht3u5C0gbsKERygyWVPZeAIWamDmK_0tulQvnqWVun9YdMxoWCzuhQEIeBQmPZ2LetTNmueIbF1B0wZ0123l1hxiTiIiNOkQYsjIcw", forHTTPHeaderField: "Authorization")
+//                let task =  URLSession.shared.dataTask(with: request as URLRequest)  { (data, response, error) in
+//                    do {
+//                        if let jsonData = data {
+//                            if let jsonDataDict  = try JSONSerialization.jsonObject(with: jsonData, options: JSONSerialization.ReadingOptions.allowFragments) as? [String: AnyObject] {
+//                                NSLog("Received data:\n\(jsonDataDict))")
+//                            }
+//                        }
+//                    } catch let err as NSError {
+//                        print(err.debugDescription)
+//                    }
+//                }
+//                task.resume()
+//            }
+//        }
+//    }
+//}
